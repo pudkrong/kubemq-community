@@ -3,14 +3,15 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/kubemq-io/broker/client/nats"
-	"github.com/kubemq-io/broker/server/stan/stores"
-	"github.com/kubemq-io/kubemq-community/pkg/entities"
-	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"hash/crc32"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/kubemq-io/broker/client/nats"
+	"github.com/kubemq-io/broker/server/stan/stores"
+	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/logging"
 
 	"github.com/kubemq-io/kubemq-community/config"
 
@@ -41,6 +42,7 @@ var defaultFileStoreOptions = stores.FileStoreOptions{
 func getFileStoreOptions(brokerOpts *config.BrokerConfig) stores.FileStoreOptions {
 
 	opts := defaultFileStoreOptions
+	opts.CompactEnabled = true
 	opts.BufferSize = brokerOpts.WriteBufferSize * 1024 * 1024
 	opts.ReadBufferSize = brokerOpts.ReadBufferSize * 1024 * 1024
 	opts.AutoSync = time.Duration(brokerOpts.DiskSyncSeconds) * time.Second
