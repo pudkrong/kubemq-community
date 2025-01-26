@@ -43,6 +43,8 @@ func getFileStoreOptions(brokerOpts *config.BrokerConfig) stores.FileStoreOption
 
 	opts := defaultFileStoreOptions
 	opts.CompactEnabled = true
+	opts.CompactInterval = 60 * 60 // 1 hour
+	opts.CompactMinFileSize = 10 * 1024 * 1024
 	opts.BufferSize = brokerOpts.WriteBufferSize * 1024 * 1024
 	opts.ReadBufferSize = brokerOpts.ReadBufferSize * 1024 * 1024
 	opts.AutoSync = time.Duration(brokerOpts.DiskSyncSeconds) * time.Second
