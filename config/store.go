@@ -14,6 +14,8 @@ type StoreConfig struct {
 	MaxQueueSize     int64  `json:"maxQueueSize"`
 	MaxRetention     int    `json:"maxRetention"`
 	MaxPurgeInactive int    `json:"maxPurgeInactive"`
+	CompactEnabled   bool   `json:"compactEnabled"`
+	CompactInterval  int    `json:"compactInterval"`
 }
 
 func defaultStoreConfig() *StoreConfig {
@@ -26,6 +28,8 @@ func defaultStoreConfig() *StoreConfig {
 		"Store.MaxQueueSize",
 		"Store.MaxRetention",
 		"Store.MaxPurgeInactive",
+		"Store.CompactEnabled",
+		"Store.CompactInterval",
 	)
 	return &StoreConfig{
 		CleanStore:       false,
@@ -36,6 +40,8 @@ func defaultStoreConfig() *StoreConfig {
 		MaxQueueSize:     0,
 		MaxRetention:     1440,
 		MaxPurgeInactive: 1440,
+		CompactEnabled:   false,
+		CompactInterval:  5,
 	}
 }
 
@@ -65,6 +71,9 @@ func (s *StoreConfig) Validate() error {
 
 	if s.MaxPurgeInactive < 0 {
 		return NewConfigurationError("bad store configuration: MaxPurgeInactive cannot be negative")
+	}
+	if s.CompactInterval < 0 {
+		return NewConfigurationError("bad store configuration: CompactInterval cannot be negative")
 	}
 	return nil
 }

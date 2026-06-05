@@ -82,6 +82,8 @@ security:
     filename: ""
 store:
   cleanStore: false
+  compactEnabled: false
+  compactInterval: 5
   maxMessages: 0
   maxPurgeInactive: 1440
   maxQueueSize: 0
