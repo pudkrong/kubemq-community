@@ -37,14 +37,12 @@ const saveInterval = time.Second * 5
 
 type service struct {
 	sync.Mutex
-	appConfig                *config.Config
-	broker                   *broker.Service
-	metricsExporter          *metrics.Exporter
-	lastSnapshot             *api.Snapshot
-	db                       *api.DB
-	logger                   *logging.Logger
-	lastLoadedEntitiesGroups map[string]*api.EntitiesGroup
-	actionClient             *actions.InternalClient
+	appConfig       *config.Config
+	broker          *broker.Service
+	metricsExporter *metrics.Exporter
+	lastSnapshot    *api.Snapshot
+	logger          *logging.Logger
+	actionClient    *actions.InternalClient
 }
 
 func newService(appConfig *config.Config, broker *broker.Service, exp *metrics.Exporter) *service {
@@ -52,34 +50,21 @@ func newService(appConfig *config.Config, broker *broker.Service, exp *metrics.E
 		appConfig:       appConfig,
 		broker:          broker,
 		metricsExporter: exp,
-		db:              api.NewDB(),
 	}
 	return s
 }
 
 func (s *service) init(ctx context.Context, logger *logging.Logger, array *array.Array) error {
 	s.logger = logger
-	if err := s.db.Init(s.appConfig.Store.StorePath); err != nil {
-		return fmt.Errorf("error initializing api db: %s", err.Error())
-	}
-	var err error
-	s.lastLoadedEntitiesGroups, err = s.db.GetLastEntities()
-	if err != nil {
-		s.logger.Errorf("error getting last entities data from local db: %s", err.Error())
-		s.lastLoadedEntitiesGroups = make(map[string]*api.EntitiesGroup)
-		s.lastLoadedEntitiesGroups["channels"] = api.NewEntitiesGroup()
-		s.lastLoadedEntitiesGroups["clients"] = api.NewEntitiesGroup()
-	}
 	s.actionClient = actions.NewInternalClient()
-	err = s.actionClient.Init(ctx, array, s.broker)
-	if err != nil {
+	if err := s.actionClient.Init(ctx, array, s.broker); err != nil {
 		return fmt.Errorf("error initializing actions client: %s", err.Error())
 	}
 	go s.run(ctx)
 	return nil
 }
 func (s *service) stop() error {
-	return s.db.Close()
+	return nil
 }
 func (s *service) run(ctx context.Context) {
 	s.logger.Infof("starting api snapshot service")
@@ -88,7 +73,7 @@ func (s *service) run(ctx context.Context) {
 		for {
 			select {
 			case <-ticker.C:
-				s.saveEntitiesGroup(ctx)
+				s.refreshSnapshot(ctx)
 			case <-ctx.Done():
 				ticker.Stop()
 				return
@@ -97,17 +82,10 @@ func (s *service) run(ctx context.Context) {
 	}()
 
 }
-func (s *service) saveEntitiesGroup(ctx context.Context) {
-	currentSnapshot, err := s.getCurrentSnapshot(ctx)
-	if err != nil {
+func (s *service) refreshSnapshot(ctx context.Context) {
+	if _, err := s.getCurrentSnapshot(ctx); err != nil {
 		s.logger.Errorf("error getting snapshot: %s", err.Error())
-		return
 	}
-	if err := s.db.SaveLastEntitiesGroup(currentSnapshot.Entities); err != nil {
-		s.logger.Errorf("error saving last entities group: %s", err.Error())
-		return
-	}
-
 }
 
 func (s *service) getCurrentSnapshot(ctx context.Context) (*api.Snapshot, error) {
@@ -118,8 +96,6 @@ func (s *service) getCurrentSnapshot(ctx context.Context) (*api.Snapshot, error)
 	if err != nil {
 		return nil, err
 	}
-	ss.Entities["channels"] = s.lastLoadedEntitiesGroups["channels"].Clone().Merge(ss.Entities["channels"])
-	ss.Entities["clients"] = s.lastLoadedEntitiesGroups["clients"].Clone().Merge(ss.Entities["clients"])
 
 	// clean queue entities waiting messages count
 	queueGroup, ok := ss.Entities["channels"].Families["queues"]
