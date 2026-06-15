@@ -88,9 +88,9 @@ func (s *Service) getBrokerOptions(appConfig *config.Config) (natsOpts *natsd.Op
 	snatsOpts.FileStoreOpts = getFileStoreOptions(appConfig.Broker)
 	snatsOpts.FileStoreOpts.CompactEnabled = appConfig.Store.CompactEnabled
 	snatsOpts.FileStoreOpts.CompactInterval = appConfig.Store.CompactInterval * 60
-	snatsOpts.ClientHBInterval = 24 * time.Hour
-	snatsOpts.ClientHBTimeout = 180 * time.Second
-	snatsOpts.ClientHBFailCount = 120
+	snatsOpts.ClientHBInterval = 30 * time.Second
+	snatsOpts.ClientHBTimeout = 10 * time.Second
+	snatsOpts.ClientHBFailCount = 5
 
 	return
 

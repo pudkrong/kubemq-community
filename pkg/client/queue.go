@@ -64,6 +64,7 @@ type QueueClient struct {
 	delayProcessorDone        chan bool
 	queueStreamMiddlewareFunc func(qc *QueueClient, msg *pb.StreamQueueMessagesRequest) error
 	queuePollMiddlewareFunc   func(qc *QueueClient, req *pb.QueuesDownstreamRequest) error
+	isPoolClient              bool
 }
 
 func NewQueueClient(opts *Options, policyCfg *config.QueueConfig) (*QueueClient, error) {
@@ -105,7 +106,20 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 	natsOpts := nats.Options{
 		Url: fmt.Sprintf("nats://0.0.0.0:%d", 4224),
 		DisconnectedErrCB: func(conn *nats.Conn, err error) {
-			conn.Close()
+			if !qc.isPoolClient {
+				qc.logger.Warnf("queue client %s nats disconnected: %v", opts.ClientID, err)
+			}
+		},
+		ClosedCB: func(conn *nats.Conn) {
+			if !qc.isPoolClient {
+				qc.logger.Errorf("queue client %s nats connection closed permanently", opts.ClientID)
+			}
+		},
+		ReconnectedCB: func(conn *nats.Conn) {
+			if !qc.isPoolClient {
+				qc.logger.Infof("queue client %s nats reconnected to %s", opts.ClientID, conn.ConnectedUrl())
+			}
+			qc.isUp.Store(true)
 		},
 	}
 	if opts.AutoReconnect {
@@ -129,7 +143,10 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 		stan.NatsURL(fmt.Sprintf("nats://0.0.0.0:%d", 4224)),
 		stan.ConnectWait(storeConnectionTime),
 		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			qc.logger.Errorf("queue client %s connection lost", opts.ClientID)
+			if !qc.isPoolClient {
+				qc.logger.Errorf("queue client %s connection lost: %v", opts.ClientID, err)
+			}
+			qc.isUp.Store(false)
 		}),
 		stan.Pings(storePingInterval, storePingMaxOut),
 		stan.MaxPubAcksInflight(4096),

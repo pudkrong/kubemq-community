@@ -29,8 +29,8 @@ const (
 const (
 	storeConnectionTime = 30 * time.Second
 	defaultDeadline     = 2000 * time.Millisecond
-	storePingInterval   = 30000
-	storePingMaxOut     = 30000
+	storePingInterval = 10
+	storePingMaxOut   = 22
 )
 
 type Client struct {
@@ -106,7 +106,8 @@ func (c *Client) connectStore(conn *nats.Conn, opts *Options) (stan.Conn, error)
 		stan.ConnectWait(storeConnectionTime),
 		stan.Pings(storePingInterval, storePingMaxOut),
 		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			c.logger.Errorf("store client %s connection lost", opts.ClientID)
+			c.logger.Errorf("store client %s connection lost: %v", opts.ClientID, err)
+			c.isUp.Store(false)
 		}),
 	)
 	return storeConn, err
@@ -117,7 +118,14 @@ func (c *Client) connect(opts *Options) error {
 	natsOpts := nats.Options{
 		Url: fmt.Sprintf("nats://0.0.0.0:%d", 4224),
 		DisconnectedErrCB: func(conn *nats.Conn, err error) {
-			conn.Close()
+			c.logger.Warnf("client %s nats disconnected: %v", opts.ClientID, err)
+		},
+		ClosedCB: func(conn *nats.Conn) {
+			c.logger.Errorf("client %s nats connection closed permanently", opts.ClientID)
+		},
+		ReconnectedCB: func(conn *nats.Conn) {
+			c.logger.Infof("client %s nats reconnected to %s", opts.ClientID, conn.ConnectedUrl())
+			c.isUp.Store(true)
 		},
 	}
 	if opts.AutoReconnect {

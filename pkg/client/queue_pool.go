@@ -22,6 +22,7 @@ func NewQueuePoolClient(channel string, opts *Options, policyCfg *config.QueueCo
 	if err != nil {
 		return nil, err
 	}
+	qc.isPoolClient = true
 	return &QueuePoolClient{
 		Channel:     channel,
 		Client:      qc,
@@ -72,7 +73,8 @@ func (qp *QueuePool) getNewClientOpts() *Options {
 	return NewClientOptions(fmt.Sprintf("%s-queue-pool_client-%s", qp.appConfig.Host, nuid.Next())).
 		SetMemoryPipe(qp.appConfig.Broker.MemoryPipe).
 		SetMaxInflight(int(qp.appConfig.Queue.MaxInflight)).
-		SetPubAckWaitSeconds(int(qp.appConfig.Queue.PubAckWaitSeconds))
+		SetPubAckWaitSeconds(int(qp.appConfig.Queue.PubAckWaitSeconds)).
+		SetAutoReconnect(false)
 }
 func (qp *QueuePool) runWatcher(ctx context.Context) {
 	for {

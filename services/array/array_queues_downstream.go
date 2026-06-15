@@ -121,6 +121,10 @@ func (a *arrayQueuesDownstreamHandler) SetRequestsCh(requestsCh chan *pb.QueuesD
 	a.requestsCh = requestsCh
 	return a
 }
+func (a *arrayQueuesDownstreamHandler) completeTransaction(t *queueDownstreamTransaction) {
+	a.transactions.Remove(t.transactionId)
+	a.releaseClientHandler(t.queueClientId)
+}
 func (a *arrayQueuesDownstreamHandler) createNewTransaction(ctx context.Context, request *pb.QueuesDownstreamRequest) {
 	t := newQueueDownstreamTransaction()
 	queueClient, id, err := a.getClientHandler()
@@ -144,6 +148,7 @@ func (a *arrayQueuesDownstreamHandler) createNewTransaction(ctx context.Context,
 	t.SetRequest(clientRequest)
 	resp, err := t.poll(ctx)
 	if err != nil {
+		a.releaseClientHandler(id)
 		a.responsesCh <- &pb.QueuesDownstreamResponse{
 			TransactionId:   t.transactionId,
 			RefRequestId:    request.RequestID,
@@ -171,6 +176,7 @@ func (a *arrayQueuesDownstreamHandler) ackAllTransaction(t *queueDownstreamTrans
 			Error:           err.Error(),
 		}
 	}
+	a.completeTransaction(t)
 
 }
 func (a *arrayQueuesDownstreamHandler) nackAllTransaction(t *queueDownstreamTransaction, requestId string) {
@@ -186,6 +192,7 @@ func (a *arrayQueuesDownstreamHandler) nackAllTransaction(t *queueDownstreamTran
 		}
 
 	}
+	a.completeTransaction(t)
 }
 func (a *arrayQueuesDownstreamHandler) ackRangeTransaction(t *queueDownstreamTransaction, requestId string, seq []int64) {
 	err := t.response.AckRange(seq)
@@ -199,6 +206,7 @@ func (a *arrayQueuesDownstreamHandler) ackRangeTransaction(t *queueDownstreamTra
 			Error:           err.Error(),
 		}
 	}
+	a.completeTransaction(t)
 }
 func (a *arrayQueuesDownstreamHandler) nackRangeTransaction(t *queueDownstreamTransaction, requestId string, seq []int64) {
 	err := t.response.NackRange(seq)
@@ -212,6 +220,7 @@ func (a *arrayQueuesDownstreamHandler) nackRangeTransaction(t *queueDownstreamTr
 			Error:           err.Error(),
 		}
 	}
+	a.completeTransaction(t)
 }
 func (a *arrayQueuesDownstreamHandler) reQueueAllTransaction(t *queueDownstreamTransaction, requestId string, channel string) {
 
@@ -227,6 +236,7 @@ func (a *arrayQueuesDownstreamHandler) reQueueAllTransaction(t *queueDownstreamT
 		}
 
 	}
+	a.completeTransaction(t)
 
 }
 func (a *arrayQueuesDownstreamHandler) reQueueRangeTransaction(t *queueDownstreamTransaction, requestId string, channel string, seq []int64) {
@@ -242,6 +252,7 @@ func (a *arrayQueuesDownstreamHandler) reQueueRangeTransaction(t *queueDownstrea
 		}
 
 	}
+	a.completeTransaction(t)
 }
 func (a *arrayQueuesDownstreamHandler) getActiveOffsetsTransaction(t *queueDownstreamTransaction, requestId string) {
 	offsets, err := t.response.ActiveOffsets()
@@ -268,6 +279,7 @@ func (a *arrayQueuesDownstreamHandler) getActiveOffsetsTransaction(t *queueDowns
 }
 func (a *arrayQueuesDownstreamHandler) closeTransaction(t *queueDownstreamTransaction, requestId string) {
 	t.response.Close()
+	a.completeTransaction(t)
 }
 
 func (a *arrayQueuesDownstreamHandler) requestTask(ctx context.Context, request *pb.QueuesDownstreamRequest) {
