@@ -9,6 +9,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/services"
 	"go.uber.org/atomic"
 	"net"
+	"time"
 
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/interfaces/grpc/middleware"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -40,6 +42,19 @@ func configureServer(svc *services.SystemServices, logger *logging.Logger, opts 
 	var connOptions []grpc.ServerOption
 	connOptions = append(connOptions, grpc.MaxRecvMsgSize(opts.maxSize))
 	connOptions = append(connOptions, grpc.MaxSendMsgSize(opts.maxSize))
+	// Server-side keepalive: probe idle connections every 30s and close them if
+	// no PONG ack arrives within 10s. Without this the server cannot detect
+	// half-dead client streams, so dead subscribers lingered until the client
+	// SDK itself gave up ("Channel has been shutdown"). No MaxConnectionAge is
+	// set, so healthy long-lived connections are not forced to reconnect.
+	connOptions = append(connOptions, grpc.KeepaliveParams(keepalive.ServerParameters{
+		Time:    30 * time.Second,
+		Timeout: 10 * time.Second,
+	}))
+	connOptions = append(connOptions, grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime:             5 * time.Second,
+		PermitWithoutStream: true,
+	}))
 
 	switch opts.security.Mode() {
 	case config.SecurityModeTLS:

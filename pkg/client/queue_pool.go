@@ -7,6 +7,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/cmap"
 	"go.uber.org/atomic"
+	"sync"
 	"time"
 )
 
@@ -57,6 +58,10 @@ type QueuePool struct {
 	poolMap   cmap.ConcurrentMap
 	isUp      *atomic.Bool
 	appConfig *config.Config
+	// mu serializes GetClient's check-and-(re)build against the watcher/Close
+	// eviction so a freshly rebuilt client cannot be torn down out from under
+	// an in-flight transaction (which would orphan and leak it).
+	mu sync.Mutex
 }
 
 func NewQueuePool(ctx context.Context, opts *QueuePoolOptions, appConfig *config.Config) *QueuePool {
@@ -80,6 +85,7 @@ func (qp *QueuePool) runWatcher(ctx context.Context) {
 	for {
 		select {
 		case <-time.After(qp.opts.KillAfter):
+			qp.mu.Lock()
 			var removeList []string
 			for key, value := range qp.poolMap.Items() {
 				client := value.(*QueuePoolClient)
@@ -91,6 +97,7 @@ func (qp *QueuePool) runWatcher(ctx context.Context) {
 			for _, key := range removeList {
 				qp.poolMap.Remove(key)
 			}
+			qp.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
@@ -101,6 +108,8 @@ func (qp *QueuePool) ClientsCount() int {
 }
 func (qp *QueuePool) Close() {
 	qp.isUp.Store(false)
+	qp.mu.Lock()
+	defer qp.mu.Unlock()
 	var removeList []string
 	for key, value := range qp.poolMap.Items() {
 		client := value.(*QueuePoolClient)
@@ -121,10 +130,24 @@ func (qp *QueuePool) GetClient(channel string) (*QueueClient, error) {
 		return nil, fmt.Errorf("bad channel name, cannot be empty")
 	}
 
+	qp.mu.Lock()
+	defer qp.mu.Unlock()
+
 	value, ok := qp.poolMap.Get(channel)
 	if ok {
 		client := value.(*QueuePoolClient)
-		return client.GetClient(), nil
+		// Self-heal: if this pooled client's STAN connection died (isUp=false)
+		// and nothing is currently using it, replace it with a fresh client
+		// before handing it out. Without this, a poisoned client kept being
+		// returned for the same channel, so every poll failed (Error 121 /
+		// Error 302) until the watcher reaped it up to KillAfter later.
+		if !client.Client.isUp.Load() && client.usedCounter.Load() == 0 {
+			_ = client.Client.Disconnect()
+			qp.poolMap.Remove(channel)
+			// fall through and create a fresh client below
+		} else {
+			return client.GetClient(), nil
+		}
 	}
 
 	newClient, err := NewQueuePoolClient(channel, qp.getNewClientOpts(), qp.appConfig.Queue)

@@ -125,7 +125,8 @@ func (c *Client) connect(opts *Options) error {
 		},
 		ReconnectedCB: func(conn *nats.Conn) {
 			c.logger.Infof("client %s nats reconnected to %s", opts.ClientID, conn.ConnectedUrl())
-			c.isUp.Store(true)
+			// Do NOT set isUp=true here; see QueueClient.connect for rationale.
+			// isUp tracks the STAN session, not the NATS transport.
 		},
 	}
 	if opts.AutoReconnect {

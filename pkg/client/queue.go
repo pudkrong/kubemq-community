@@ -119,7 +119,14 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 			if !qc.isPoolClient {
 				qc.logger.Infof("queue client %s nats reconnected to %s", opts.ClientID, conn.ConnectedUrl())
 			}
-			qc.isUp.Store(true)
+			// Intentionally do NOT set isUp=true here. isUp tracks the STAN
+			// (logical) session, not the NATS TCP transport: a NATS reconnect
+			// does not revive a stan.Conn whose ConnectionLostHandler already
+			// fired (it is permanently closed). If STAN did recover on its own,
+			// isUp was never flipped to false, so it correctly stays true.
+			// Resurrecting isUp here produced a stale "up" over a dead STAN
+			// connection, which made the next QueueSubscribe fail with
+			// "stan: connection closed" -> Error 121.
 		},
 	}
 	if opts.AutoReconnect {
@@ -157,19 +164,33 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 }
 
 func (qc *QueueClient) Disconnect() error {
-
-	if !qc.isUp.Load() {
-		return nil
-	}
 	qc.isUp.Store(false)
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	err := qc.queueConn.Close()
-	if err != nil {
-		return err
+	// Always close the underlying connections, even if isUp was already false.
+	// A client can be marked down (markDown / ConnectionLostHandler) while its
+	// stan.Conn / nats.Conn are still open; the old early-return here leaked
+	// those sockets whenever Disconnect ran on an already-down client (notably
+	// when the pool watcher evicted a poisoned client).
+	if qc.queueConn != nil {
+		if err := qc.queueConn.Close(); err != nil {
+			qc.logger.Debugw("queue client disconnect: stan close", "error", err.Error())
+		}
 	}
-	qc.baseConn.Close()
+	if qc.baseConn != nil {
+		qc.baseConn.Close()
+	}
 	return nil
+}
+
+// markDown flags the client as unavailable after a STAN operation failed in a way
+// that means the stan.Conn is no longer usable (e.g. QueueSubscribe returned an
+// error, typically "stan: connection closed"). Leaving isUp=true would cause
+// every subsequent operation to retry the same dead connection (Error 121 loop)
+// until the pool watcher eventually evicts it.
+func (qc *QueueClient) markDown(reason string, err error) {
+	qc.isUp.Store(false)
+	qc.logger.Errorw("queue client marked down", "reason", reason, "error", err.Error())
 }
 
 func (qc *QueueClient) checkChannelNameValidity(channel string) error {
@@ -695,6 +716,7 @@ func (qc *QueueClient) MonitorQueueMessages(ctx context.Context, channel string,
 
 	}, stan.StartAt(0))
 	if err != nil {
+		qc.markDown("monitor subscribe", err)
 		errCh <- entities.ErrRegisterQueueSubscription
 		return
 	}
@@ -795,6 +817,7 @@ func (qc *QueueClient) receiveQueueMessages(ctx context.Context, request *pb.Rec
 
 	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(1), stan.AckWait(120*time.Second), stan.SetManualAckMode())
 	if err != nil {
+		qc.markDown("subscribe", err)
 		response.IsError = true
 		response.Error = entities.ErrRegisterQueueSubscription.Error()
 		return response, nil
@@ -902,6 +925,7 @@ func (qc *QueueClient) receiveQueueMessagesForPeek(ctx context.Context, request 
 
 	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(int(request.MaxNumberOfMessages)), stan.AckWait(waitTimeout+time.Second), stan.SetManualAckMode())
 	if err != nil {
+		qc.markDown("subscribe", err)
 		response.IsError = true
 		response.Error = entities.ErrRegisterQueueSubscription.Error()
 		return response, nil
@@ -1012,6 +1036,7 @@ func (qc *QueueClient) AckAllQueueMessages(ctx context.Context, req *pb.AckAllQu
 	}, stan.StartAt(4), stan.DurableName(subChannel))
 
 	if err != nil {
+		qc.markDown("subscribe", err)
 		response.IsError = true
 		response.Error = entities.ErrRegisterQueueSubscription.Error()
 		return response, nil
@@ -1150,6 +1175,7 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 				if err != nil {
 					// subscribe failed
 					qc.logger.Errorw("stream queue message subscribe error", "queue", activeQueueName, "error", err.Error())
+					qc.markDown("stream subscribe", err)
 					responseInternalCh <- createResponseWithError(currentRequest, entities.ErrRegisterQueueSubscription)
 					continue
 				}
@@ -1532,6 +1558,7 @@ func (qc *QueueClient) Poll(ctx context.Context, request *QueueDownstreamRequest
 
 	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(int(request.MaxItems)), stan.AckWait(365*24*time.Hour), stan.SetManualAckMode())
 	if err != nil {
+		qc.markDown("poll subscribe", err)
 		return nil, entities.ErrRegisterQueueSubscription
 	}
 
