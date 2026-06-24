@@ -34,7 +34,7 @@ func NewChannelDTO(_type, name string, entity *Entity, clientsEntities *Entities
 	}
 	c.ChannelKey = fmt.Sprintf("%s-%s", c.Type, c.Name)
 	for _, client := range clientsEntities.List() {
-		if client.Name != "" {
+		if client.Name != "" && client.IsActive() {
 			c.Clients = append(c.Clients, NewClientDTO(client.Name, client))
 		}
 	}
